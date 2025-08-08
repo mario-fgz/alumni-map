@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Science Alumni Map</title>
+  <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
+  <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet" />
+  <style>
+    body { margin: 0; padding: 0; }
+    #map { position: absolute; top: 0; bottom: 0; width: 100%; }
+    .popup-card { width: 260px; }
+    .popup-card img { width: 100%; border-radius: 6px; margin: 6px 0; }
+    .popup-card .name { font-weight: 700; }
+    .popup-card .role { font-style: italic; color: #555; }
+    .legend { position: absolute; bottom: 16px; left: 16px; background: white; border-radius: 8px; padding: 8px 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+  </style>
+</head>
+<body>
+<div id="map"></div>
+<div class="legend">Click the student icons to view profiles</div>
+
+<script>
+  mapboxgl.accessToken = 'pk.eyJ1IjoibWFyaW9mZ3oiLCJhIjoiY21jbDh0azNjMDk0bTJpcHh0d3VhazdvYSJ9.-fUhsiAQEiWILrNi9C5vjg';
+  const styleUrl = 'mapbox://styles/mariofgz/cmd6wlcaj03hv01srcgvpbtos';
+
+  const map = new mapboxgl.Map({
+    container: 'map',
+    style: styleUrl,
+    center: [120, 5],
+    zoom: 2
+  });
+
+  map.on('load', () => {
+    // ---- OPTIONAL
+    // map.addSource('alumni-circles', { type: 'geojson', data: 'alumni_grouped_geocoded.geojson' });
+    // map.addLayer({
+    //   id: 'alumni-circles-layer',
+    //   type: 'circle',
+    //   source: 'alumni-circles',
+    //   paint: {
+    //     'circle-radius': ['interpolate', ['linear'], ['get', 'count'], 1, 4, 100, 12, 1000, 24, 10000, 48],
+    //     'circle-color': '#1E90FF',
+    //     'circle-opacity': 0.6,
+    //     'circle-stroke-color': '#003366',
+    //     'circle-stroke-width': 1
+    //   }
+    // });
+
+    // ---- Profiles layer (icons + popups) ----
+    map.loadImage('https://docs.mapbox.com/mapbox-gl-js/assets/custom_marker.png', (error, image) => {
+      if (error) throw error;
+      map.addImage('student-icon', image);
+
+      map.addSource('alumni-profiles', {
+        type: 'geojson',
+        data: './alumni_profiles.geojson' // keep this file alongside index.html
+      });
+
+      map.addLayer({
+        id: 'alumni-profiles-layer',
+        type: 'symbol',
+        source: 'alumni-profiles',
+        layout: {
+          'icon-image': 'student-icon',
+          'icon-size': 0.08,
+          'icon-allow-overlap': true,
+          'text-field': ['get', 'name'],
+          'text-size': 12,
+          'text-offset': [0, 1],
+          'text-anchor': 'top'
+        },
+        paint: {
+          'text-color': '#111'
+        }
+      });
+
+      map.on('click', 'alumni-profiles-layer', (e) => {
+        const p = e.features[0].properties;
+        const coords = e.features[0].geometry.coordinates.slice();
+        const html = `
+          <div class="popup-card">
+            <div class="name">${p.name}</div>
+            <div class="role">${p.job_title} — ${p.employer}</div>
+            <img src="${p.image}" alt="${p.name}" />
+            <div class="overview">${p.overview}</div>
+            <div style="margin-top:6px">
+              <a href="${p.career_link}" target="_blank" rel="noopener">Read career story →</a>
+            </div>
+          </div>`;
+        new mapboxgl.Popup({ maxWidth: '320px' }).setLngLat(coords).setHTML(html).addTo(map);
+      });
+
+      map.on('mouseenter', 'alumni-profiles-layer', () => {
+        map.getCanvas().style.cursor = 'pointer';
+      });
+      map.on('mouseleave', 'alumni-profiles-layer', () => {
+        map.getCanvas().style.cursor = '';
+      });
+    });
+  });
+</script>
+</body>
+</html>
