@@ -98,8 +98,24 @@ map.on('mousemove', 'alumni-circles-layer', (e) => {
   const f = e.features?.[0];
   if (!f) return;
   const p = f.properties || {};
-  const country = p.COUNTRY || p.country || p.Country || ''; // prioritise country
-  const label = country || p.STATE || p.state || p.State || 'Unknown location';
+
+  const country = p.COUNTRY || p.country || p.Country || '';
+  let state = p.STATE || p.state || p.State || '';
+  
+  // Remove placeholders like "Unknown"
+  if (state.toLowerCase() === 'unknown') state = '';
+
+  let label = '';
+  if (state && country) {
+    label = `${state}, ${country}`;
+  } else if (country) {
+    label = country;
+  } else if (state) {
+    label = state;
+  } else {
+    label = 'Unknown location';
+  }
+
   const count = p.count ?? p.Count ?? p.COUNT ?? 0;
   const coords = f.geometry?.coordinates || [e.lngLat.lng, e.lngLat.lat];
   showTip(coords, `<b>${label}</b><br>Alumni: ${count}`);
