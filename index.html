@@ -257,9 +257,10 @@
         type:'line',
         source:'connections',
         paint:{
-          'line-color':'#6b7280',
-          'line-opacity': ['interpolate', ['linear'], ['zoom'], 2, 0.15, 4, 0.35, 6, 0.5],
-          'line-width': 1.5
+          'line-color':'#4ecdc4',
+          'line-opacity': ['interpolate', ['linear'], ['zoom'], 2, 0.12, 4, 0.3, 6, 0.45],
+          'line-width': 1.5,
+          'line-dasharray': [2, 4]
         }
       }, 'alumni-circles-layer');
     } catch(e){ console.warn('Connection lines skipped:', e); }
