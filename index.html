@@ -209,62 +209,92 @@
         .addTo(map);
     });
 
-    // ====== CONNECTION LINES ======
-    try {
-      const res = await fetch('./alumni_grouped.geojson');
-      const gj  = await res.json();
-      const pts = (gj.features || []).filter(f => f.geometry?.type === 'Point');
-      const N   = Math.min(15, Math.floor(pts.length / 3));
-      const used = new Set(), lines = [];
+// ====== CONNECTION LINES ======
+try {
+  const res = await fetch('./alumni_grouped.geojson');
+  const gj  = await res.json();
+  const pts = (gj.features || []).filter(f => f.geometry?.type === 'Point');
 
-      const pick = () => {
-        let i = Math.floor(Math.random() * pts.length), guard = 0;
-        while (used.has(i) && guard++ < 50) i = Math.floor(Math.random() * pts.length);
-        used.add(i); return i;
-      };
+  if (pts.length < 2) throw new Error('Not enough points for connections');
 
-      // simple bezier-ish curve between two lng/lat points
-      function curvedLine(a, b) {
-        const [x1,y1] = a, [x2,y2] = b;
-        const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
-        const dx = x2 - x1, dy = y2 - y1;
-        const len = Math.hypot(dx, dy) || 1;
-        const nx = -dy / len, ny = dx / len;
-        const strength = 10; // tweak bend
-        const cx = mx + nx * strength, cy = my + ny * strength;
-        const steps = 30, coords = [];
-        for (let t=0;t<=1;t+=1/steps){
-          const x = (1-t)*(1-t)*x1 + 2*(1-t)*t*cx + t*t*x2;
-          const y = (1-t)*(1-t)*y1 + 2*(1-t)*t*cy + t*t*y2;
-          coords.push([x,y]);
-        }
-        return coords;
-      }
+  const N   = Math.min(18, Math.floor(pts.length / 3)); // a few more lines
+  const used = new Set(), lines = [];
 
-      for (let i=0;i<N && pts.length>=2;i++){
-        const a = pts[pick()], b = pts[pick()];
-        if (!a || !b || a===b) continue;
-        lines.push({
-          type:'Feature',
-          geometry:{ type:'LineString', coordinates: curvedLine(a.geometry.coordinates, b.geometry.coordinates) },
-          properties:{}
-        });
-      }
+  const pick = () => {
+    let i = Math.floor(Math.random() * pts.length), guard = 0;
+    while (used.has(i) && guard++ < 50) i = Math.floor(Math.random() * pts.length);
+    used.add(i); return i;
+  };
 
-      map.addSource('connections', { type:'geojson', data:{ type:'FeatureCollection', features: lines } });
-      map.addLayer({
-        id:'connections-layer',
-        type:'line',
-        source:'connections',
-        paint:{
-          'line-color':'#4ecdc4',
-          'line-opacity': ['interpolate', ['linear'], ['zoom'], 2, 0.12, 4, 0.3, 6, 0.45],
-          'line-width': 1.5,
-          'line-dasharray': [2, 4]
-        }
-      }, 'alumni-circles-layer');
-    } catch(e){ console.warn('Connection lines skipped:', e); }
+  // curved arc between two [lng,lat] points
+  function curvedLine(a, b) {
+    const [x1,y1] = a, [x2,y2] = b;
+    const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+    const dx = x2 - x1, dy = y2 - y1;
+    const len = Math.hypot(dx, dy) || 1;
+    const nx = -dy / len, ny = dx / len;
+    const strength = 10; // bend amount
+    const cx = mx + nx * strength, cy = my + ny * strength;
+    const steps = 30, coords = [];
+    for (let t=0; t<=1; t+=1/steps) {
+      const x = (1-t)*(1-t)*x1 + 2*(1-t)*t*cx + t*t*x2;
+      const y = (1-t)*(1-t)*y1 + 2*(1-t)*t*cy + t*t*y2;
+      coords.push([x,y]);
+    }
+    return coords;
+  }
 
+  for (let i=0; i<N; i++){
+    const a = pts[pick()], b = pts[pick()];
+    if (!a || !b || a === b) continue;
+    lines.push({
+      type:'Feature',
+      geometry:{ type:'LineString', coordinates: curvedLine(a.geometry.coordinates, b.geometry.coordinates) },
+      properties:{}
+    });
+  }
+
+  map.addSource('connections', {
+    type:'geojson',
+    data:{ type:'FeatureCollection', features: lines }
+  });
+  const beforeId = map.getLayer('alumni-profiles-layer') ? 'alumni-profiles-layer' : undefined;
+
+  map.addLayer({
+    id:'connections-layer',
+    type:'line',
+    source:'connections',
+    layout: {
+      'line-cap': 'round',
+      'line-join': 'round'
+    },
+    paint:{
+      'line-color':'#4ecdc4',
+      'line-opacity': ['interpolate', ['linear'], ['zoom'], 2, 0.18, 4, 0.35, 6, 0.5],
+      'line-width': 1.8,
+      'line-dasharray': [0, 2, 3] // dotted pattern (will animate)
+    }
+  }, beforeId);
+
+  // Animated dasharray (gentle flowing effect)
+  let step = 0;
+  const seq = [
+    [0, 2, 3], 
+    [1, 2, 3],
+    [2, 2, 3],
+    [3, 2, 3]
+  ];
+  function tick() {
+    if (!map.getLayer('connections-layer')) return;
+    map.setPaintProperty('connections-layer', 'line-dasharray', seq[step]);
+    step = (step + 1) % seq.length;
+    setTimeout(() => requestAnimationFrame(tick), 350);
+  }
+  requestAnimationFrame(tick);
+
+} catch(e) {
+  console.warn('Connection lines skipped:', e);
+}
     // ====== STUDENT PROFILES (pins + click popups) ======
     map.loadImage('https://docs.mapbox.com/mapbox-gl-js/assets/custom_marker.png', (err, img) => {
       if (err) throw err;
