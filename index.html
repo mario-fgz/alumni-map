@@ -28,10 +28,9 @@
 </head>
 <body>
 <div id="map"></div>
-<div class="legend">Hover circles for counts • Click student icons for bios</div>
+<div class="legend">Click student icons for bios</div>
 
 <script>
-  // Your values
   mapboxgl.accessToken = 'pk.eyJ1IjoibWFyaW9mZ3oiLCJhIjoiY21lMjlwajc4MHAxdDJxcHUwcWJhaTMzZSJ9.155BX_OMpbLYEk8AGx1unw';
   const styleUrl = 'mapbox://styles/mariofgz/cmd6wlcaj03hv01srcgvpbtos';
 
@@ -51,7 +50,7 @@
 
   map.on('error', e => console.error('Mapbox error →', e && e.error));
 
-  // Hover tooltip DOM
+  // Hover tooltip
   const tip = document.createElement('div');
   tip.className = 'tooltip';
   tip.style.display = 'none';
@@ -68,7 +67,7 @@
   map.on('move', () => { if (tip._lngLat) showTip(tip._lngLat, tip.innerHTML); });
 
   map.on('load', async () => {
-    // 1) Alumni circles (breakpoints, colors, no stroke)
+    // Alumni circles
     map.addSource('alumni-circles', { type: 'geojson', data: './alumni_grouped.geojson' });
 
     map.addLayer({
@@ -90,26 +89,24 @@
           2000, '#dad662'  // 2000+
         ],
         'circle-opacity': 0.75,
-        'circle-stroke-width': 0 // remove stroke
+        'circle-stroke-width': 0
       }
     });
 
     // Hover tooltip on circles
-    map.on('mousemove', 'alumni-circles-layer', (e) => {
-      const f = e.features?.[0]; if (!f) return;
-      const p = f.properties || {};
-      const label =
-        p.location_key ||
-        (p.STATE && p.COUNTRY ? `${p.STATE}, ${p.COUNTRY}` : (p.COUNTRY || 'Location'));
-      const count = p.count ?? p.Count ?? p.COUNT ?? 0;
-      const coords = f.geometry?.coordinates || [e.lngLat.lng, e.lngLat.lat];
-      showTip(coords, `<b>${label}</b><br>Alumni: ${count}`);
-      map.getCanvas().style.cursor = 'pointer';
-    });
+map.on('mousemove', 'alumni-circles-layer', (e) => {
+  const f = e.features?.[0];
+  if (!f) return;
+  const p = f.properties || {};
+  const country = p.COUNTRY || p.country || p.Country || ''; // prioritise country
+  const label = country || p.STATE || p.state || p.State || 'Unknown location';
+  const count = p.count ?? p.Count ?? p.COUNT ?? 0;
+  const coords = f.geometry?.coordinates || [e.lngLat.lng, e.lngLat.lat];
+  showTip(coords, `<b>${label}</b><br>Alumni: ${count}`);
+  map.getCanvas().style.cursor = 'pointer';
+});
     map.on('mouseleave', 'alumni-circles-layer', () => { hideTip(); map.getCanvas().style.cursor=''; });
 
-    // 2) Info icons on top of circles (click to “pop” into area)
-    // Using built-in Maki icon "information-15"
     map.addLayer({
       id: 'alumni-circles-info',
       type: 'symbol',
@@ -146,8 +143,6 @@
         .addTo(map);
     });
 
-    // 3) Random aesthetic connection lines between alumni points
-    // Build a few random pairs client-side
     try {
       const res = await fetch('./alumni_grouped.geojson');
       const gj = await res.json();
@@ -175,10 +170,10 @@
           'line-opacity':0.35,
           'line-width':1.5
         }
-      }, 'alumni-circles-layer'); // draw behind icons but above base
+      }, 'alumni-circles-layer'); 
     } catch(e){ console.warn('Connection lines skipped:', e); }
 
-    // 4) Student profiles (pins + click popup)
+    //Student profiles (pins + click popup)
     map.loadImage('https://docs.mapbox.com/mapbox-gl-js/assets/custom_marker.png', (err, img) => {
       if (err) throw err;
       if (!map.hasImage('student-icon')) map.addImage('student-icon', img);
