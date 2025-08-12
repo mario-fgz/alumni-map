@@ -58,6 +58,7 @@
     center: [120, 5],
     zoom: 2,
     projection: 'mercator'
+    renderWorldCopies: false
   });
 
   // Fallback if style has no background (prevents blank basemap)
@@ -205,82 +206,79 @@
         .addTo(map);
     });
 
-    // ====== CONNECTION LINES (curved, dotted, animated) ======
-    try {
-      const r = await fetch('./alumni_grouped.geojson');
-      const gj = await r.json();
-      const pts = (gj.features || []).filter(f => f.geometry && f.geometry.type === 'Point');
-      if (pts.length >= 2) {
-        const N = Math.min(18, Math.floor(pts.length / 3));
-        const used = new Set(), lines = [];
+ // ====== 2) CONNECTION LINES ======
+try {
+  const pts = (circlesGJ.features || []).filter(f => f.geometry?.type === 'Point');
 
-        const pick = () => {
-          let i = Math.floor(Math.random() * pts.length), guard = 0;
-          while (used.has(i) && guard++ < 50) i = Math.floor(Math.random() * pts.length);
-          used.add(i); return i;
-        };
+  const isNSW = f => {
+    const p = f.properties || {};
+    const clean = v => (v && String(v).toLowerCase() !== 'unknown') ? String(v).toUpperCase() : '';
+    const country = clean(p.COUNTRY || p.country || p.Country);
+    const state   = clean(p.STATE   || p.state   || p.State);
+    return country === 'AUSTRALIA' && state === 'NSW';
+  };
+  const hub = pts.find(isNSW);
+  const hubCoord = hub?.geometry?.coordinates || [151.2093, -33.8688]; // fallback: Sydney
 
-        function curvedLine(a, b) {
-          const [x1,y1] = a, [x2,y2] = b;
-          const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
-          const dx = x2 - x1, dy = y2 - y1;
-          const len = Math.hypot(dx, dy) || 1;
-          const nx = -dy / len, ny = dx / len;
-          const strength = 10;
-          const cx = mx + nx * strength, cy = my + ny * strength;
-          const steps = 30, coords = [];
-          for (let t=0; t<=1; t+=1/steps) {
-            const x = (1-t)*(1-t)*x1 + 2*(1-t)*t*cx + t*t*x2;
-            const y = (1-t)*(1-t)*y1 + 2*(1-t)*t*cy + t*t*y2;
-            coords.push([x,y]);
-          }
-          return coords;
-        }
+  // Build curved lines from NSW to random other points
+  const others = pts.filter(f => f !== hub);
+  const pickN  = Math.min(18, others.length);
+  const shuffled = others.sort(() => Math.random() - 0.5).slice(0, pickN);
 
-        for (let i=0; i<N; i++){
-          const a = pts[pick()], b = pts[pick()];
-          if (!a || !b || a === b) continue;
-          lines.push({
-            type:'Feature',
-            geometry:{ type:'LineString', coordinates: curvedLine(a.geometry.coordinates, b.geometry.coordinates) },
-            properties:{}
-          });
-        }
-
-        map.addSource('connections', {
-          type:'geojson',
-          data:{ type:'FeatureCollection', features: lines }
-        });
-
-        const beforeId = map.getLayer('alumni-profiles-layer') ? 'alumni-profiles-layer' : undefined;
-
-        map.addLayer({
-          id:'connections-layer',
-          type:'line',
-          source:'connections',
-          layout: { 'line-cap': 'round', 'line-join': 'round' },
-          paint:{
-            'line-color':'#4ecdc4',
-            'line-opacity': ['interpolate', ['linear'], ['zoom'], 2, 0.18, 4, 0.35, 6, 0.5],
-            'line-width': 1.8,
-            'line-dasharray': [0, 2, 3]
-          }
-        }, beforeId);
-
-        // Animated dasharray (gentle flowing effect)
-        let step = 0;
-        const seq = [[0,2,3],[1,2,3],[2,2,3],[3,2,3]];
-        function tick() {
-          if (!map.getLayer('connections-layer')) return;
-          map.setPaintProperty('connections-layer', 'line-dasharray', seq[step]);
-          step = (step + 1) % seq.length;
-          setTimeout(() => requestAnimationFrame(tick), 350);
-        }
-        requestAnimationFrame(tick);
-      }
-    } catch(e) {
-      console.warn('Connection lines skipped:', e);
+  function curvedLine(a, b) {
+    const [x1,y1] = a, [x2,y2] = b;
+    const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+    const dx = x2 - x1, dy = y2 - y1;
+    const len = Math.hypot(dx, dy) || 1;
+    const nx = -dy / len, ny = dx / len;
+    const strength = 10;
+    const cx = mx + nx * strength, cy = my + ny * strength;
+    const steps = 30, coords = [];
+    for (let t=0; t<=1; t+=1/steps) {
+      const x = (1-t)*(1-t)*x1 + 2*(1-t)*t*cx + t*t*x2;
+      const y = (1-t)*(1-t)*y1 + 2*(1-t)*t*cy + t*t*y2;
+      coords.push([x,y]);
     }
+    return coords;
+  }
+
+  const lines = shuffled.map(f => ({
+    type: 'Feature',
+    geometry: { type: 'LineString', coordinates: curvedLine(hubCoord, f.geometry.coordinates) },
+    properties: {}
+  }));
+
+  map.addSource('connections', {
+    type: 'geojson',
+    data: { type: 'FeatureCollection', features: lines }
+  });
+
+  const beforeId = map.getLayer('alumni-profiles-layer') ? 'alumni-profiles-layer' : undefined;
+
+  map.addLayer({
+    id: 'connections-layer',
+    type: 'line',
+    source: 'connections',
+    layout: { 'line-cap': 'round', 'line-join': 'round' },
+    paint: {
+      'line-color': '#00bcd4',                    // brighter aqua for readability
+      'line-opacity': ['interpolate', ['linear'], ['zoom'], 2, 0.25, 4, 0.45, 6, 0.6],
+      'line-width': 2.2,
+      'line-dasharray': [0, 2, 3]                 // dotted
+    }
+  }, beforeId);
+
+  // Animate the dasharray (gentle flowing effect)
+  let step = 0;
+  const seq = [[0,2,3],[1,2,3],[2,2,3],[3,2,3]];
+  function tick() {
+    if (!map.getLayer('connections-layer')) return;
+    map.setPaintProperty('connections-layer', 'line-dasharray', seq[step]);
+    step = (step + 1) % seq.length;
+    setTimeout(() => requestAnimationFrame(tick), 350);
+  }
+  requestAnimationFrame(tick);
+} catch (e) { console.warn('Connections skipped:', e); }
 
     // ====== STUDENT PROFILES (photo avatars + click popups) ======
     try {
