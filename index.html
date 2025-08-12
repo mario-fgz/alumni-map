@@ -57,7 +57,7 @@
     style: styleUrl,
     center: [120, 5],
     zoom: 2,
-    projection: 'mercator'
+    projection: 'mercator',
     renderWorldCopies: false
   });
 
@@ -88,6 +88,7 @@
   }
   map.on('move', () => { if (tip._lngLat) showTip(tip._lngLat, tip.innerHTML); });
 
+  // Shared expressions for circles
   const sizeByCount = ['step', ['to-number', ['get', 'count']], 5, 11, 12, 1000, 18, 2000, 25];
   const colorByCount = ['step', ['to-number', ['get', 'count']],
     '#496dee', 11, '#d95e8b', 1000, '#e7975a', 2000, '#dad662'
@@ -95,47 +96,58 @@
 
   map.on('load', async () => {
     // ====== ALUMNI CIRCLES ======
-const fixCoords = (gj) => {
-  const clean = v => (v && String(v).toLowerCase() !== 'unknown') ? String(v).toUpperCase() : '';
-  const near = (s, needle) => s && s.indexOf(needle) !== -1;
+    const fixCoords = (gj) => {
+      const clean = v => (v && String(v).toLowerCase() !== 'unknown') ? String(v).toUpperCase() : '';
+      const near = (s, needle) => s && s.indexOf(needle) !== -1;
 
-  (gj.features || []).forEach(f => {
-    const p = f.properties || {};
-    const country = clean(p.COUNTRY || p.country || p.Country);
-    const state   = clean(p.STATE   || p.state   || p.State);
+      (gj.features || []).forEach(f => {
+        const p = f.properties || {};
+        const country = clean(p.COUNTRY || p.country || p.Country);
+        const state   = clean(p.STATE   || p.state   || p.State);
+        if (!f.geometry || f.geometry.type !== 'Point') return;
 
-    if (!f.geometry || f.geometry.type !== 'Point') return;
+        // Îles du Vent
+        if (near(state, 'ILES DU VENT') || near(country, 'FRENCH POLYNESIA')) {
+          f.geometry.coordinates = [-149.4068, -17.6509];
+        }
+        // New Caledonia
+        if (near(country, 'NEW CALEDONIA')) {
+          f.geometry.coordinates = [166.457, -22.271];
+        }
+        // Micronesia
+        if (near(country, 'MICRONESIA')) {
+          f.geometry.coordinates = [158.215, 6.885];
+        }
+      });
+      return gj;
+    };
 
-    // Îles du Vent (French Polynesia) → center on Tahiti (Papeete)
-    if (near(state, 'ILES DU VENT') || near(country, 'FRENCH POLYNESIA')) {
-      f.geometry.coordinates = [-149.4068, -17.6509];
-    }
+    const circlesResp = await fetch('./alumni_grouped.geojson');
+    let circlesGJ = await circlesResp.json();
+    circlesGJ = fixCoords(circlesGJ);
 
-    // New Caledonia → center on Nouméa
-    if (near(country, 'NEW CALEDONIA')) {
-      f.geometry.coordinates = [166.457, -22.271];
-    }
-
-    // Micronesia (FSM) → center on Pohnpei
-    if (near(country, 'MICRONESIA')) {
-      f.geometry.coordinates = [158.215, 6.885];
-    }
-  });
-  return gj;
-};
-
-const circlesResp = await fetch('./alumni_grouped.geojson');
-let circlesGJ = await circlesResp.json();
-circlesGJ = fixCoords(circlesGJ);
-
-map.addSource('alumni-circles', {
-  type: 'geojson',
-  data: circlesGJ,
-  generateId: true
-});
+    map.addSource('alumni-circles', {
+      type: 'geojson',
+      data: circlesGJ,
+      generateId: true
     });
 
-    // Hover
+    // Base circle layer
+    map.addLayer({
+      id: 'alumni-circles-layer',
+      type: 'circle',
+      source: 'alumni-circles',
+      paint: {
+        'circle-radius': sizeByCount,
+        'circle-color': colorByCount,
+        'circle-opacity': 0.80,
+        'circle-stroke-width': 0,
+        'circle-blur': 0.15
+      },
+      filter: ['==', ['geometry-type'], 'Point']
+    });
+
+    // Hover emphasis layer
     map.addLayer({
       id: 'alumni-circles-hover',
       type: 'circle',
@@ -188,6 +200,7 @@ map.addSource('alumni-circles', {
       map.getCanvas().style.cursor = '';
     });
 
+    // Info icons on top of circles
     map.addLayer({
       id: 'alumni-circles-info',
       type: 'symbol',
@@ -226,91 +239,99 @@ map.addSource('alumni-circles', {
         .addTo(map);
     });
 
- // ====== 2) CONNECTION LINES ======
-try {
-  const pts = (circlesGJ.features || []).filter(f => f.geometry?.type === 'Point');
+    // ====== CONNECTION LINES ======
+    try {
+      const pts = (circlesGJ.features || []).filter(f => f.geometry && f.geometry.type === 'Point');
 
-  const isNSW = f => {
-    const p = f.properties || {};
-    const clean = v => (v && String(v).toLowerCase() !== 'unknown') ? String(v).toUpperCase() : '';
-    const country = clean(p.COUNTRY || p.country || p.Country);
-    const state   = clean(p.STATE   || p.state   || p.State);
-    return country === 'AUSTRALIA' && state === 'NSW';
-  };
-  const hub = pts.find(isNSW);
-  const hubCoord = hub?.geometry?.coordinates || [151.2093, -33.8688]; // fallback: Sydney
+      // Find NSW, Australia as the hub
+      const isNSW = f => {
+        const p = f.properties || {};
+        const clean = v => (v && String(v).toLowerCase() !== 'unknown') ? String(v).toUpperCase() : '';
+        const country = clean(p.COUNTRY || p.country || p.Country);
+        const state   = clean(p.STATE   || p.state   || p.State);
+        return country === 'AUSTRALIA' && state === 'NSW';
+      };
+      const hub = pts.find(isNSW);
+      const hubCoord = hub && hub.geometry && hub.geometry.coordinates ? hub.geometry.coordinates : [151.2093, -33.8688]; // Sydney fallback
 
-  // Build curved lines from NSW to random other points
-  const others = pts.filter(f => f !== hub);
-  const pickN  = Math.min(18, others.length);
-  const shuffled = others.sort(() => Math.random() - 0.5).slice(0, pickN);
+      // Build curved lines from NSW to random other points
+      const others = pts.filter(f => f !== hub);
+      const pickN  = Math.min(18, others.length);
+      const shuffled = others.sort(() => Math.random() - 0.5).slice(0, pickN);
 
-  function curvedLine(a, b) {
-    const [x1,y1] = a, [x2,y2] = b;
-    const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
-    const dx = x2 - x1, dy = y2 - y1;
-    const len = Math.hypot(dx, dy) || 1;
-    const nx = -dy / len, ny = dx / len;
-    const strength = 10;
-    const cx = mx + nx * strength, cy = my + ny * strength;
-    const steps = 30, coords = [];
-    for (let t=0; t<=1; t+=1/steps) {
-      const x = (1-t)*(1-t)*x1 + 2*(1-t)*t*cx + t*t*x2;
-      const y = (1-t)*(1-t)*y1 + 2*(1-t)*t*cy + t*t*y2;
-      coords.push([x,y]);
-    }
-    return coords;
-  }
+      function curvedLine(a, b) {
+        const [x1,y1] = a, [x2,y2] = b;
+        const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+        const dx = x2 - x1, dy = y2 - y1;
+        const len = Math.hypot(dx, dy) || 1;
+        const nx = -dy / len, ny = dx / len;
+        const strength = 10;
+        const cx = mx + nx * strength, cy = my + ny * strength;
+        const steps = 30, coords = [];
+        for (let t=0; t<=1; t+=1/steps) {
+          const x = (1-t)*(1-t)*x1 + 2*(1-t)*t*cx + t*t*x2;
+          const y = (1-t)*(1-t)*y1 + 2*(1-t)*t*cy + t*t*y2;
+          coords.push([x,y]);
+        }
+        return coords;
+      }
 
-  const lines = shuffled.map(f => ({
-    type: 'Feature',
-    geometry: { type: 'LineString', coordinates: curvedLine(hubCoord, f.geometry.coordinates) },
-    properties: {}
-  }));
+      const lines = shuffled.map(f => ({
+        type: 'Feature',
+        geometry: { type: 'LineString', coordinates: curvedLine(hubCoord, f.geometry.coordinates) },
+        properties: {}
+      }));
 
-  map.addSource('connections', {
-    type: 'geojson',
-    data: { type: 'FeatureCollection', features: lines }
-  });
+      map.addSource('connections', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: lines }
+      });
 
-  const beforeId = map.getLayer('alumni-profiles-layer') ? 'alumni-profiles-layer' : undefined;
+      map.addLayer({
+        id:'connections-layer',
+        type:'line',
+        source:'connections',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint:{
+          'line-color': '#00bcd4',
+          'line-opacity': ['interpolate', ['linear'], ['zoom'], 2, 0.25, 4, 0.45, 6, 0.6],
+          'line-width': 2.2,
+          'line-dasharray': [0, 2, 3]
+        }
+      });
 
-  map.addLayer({
-    id: 'connections-layer',
-    type: 'line',
-    source: 'connections',
-    layout: { 'line-cap': 'round', 'line-join': 'round' },
-    paint: {
-      'line-color': '#00bcd4',                    // brighter aqua for readability
-      'line-opacity': ['interpolate', ['linear'], ['zoom'], 2, 0.25, 4, 0.45, 6, 0.6],
-      'line-width': 2.2,
-      'line-dasharray': [0, 2, 3]                 // dotted
-    }
-  }, beforeId);
+      // Animated dasharray (gentle flowing effect)
+      let step = 0;
+      const seq = [[0,2,3],[1,2,3],[2,2,3],[3,2,3]];
+      function tick() {
+        if (!map.getLayer('connections-layer')) return;
+        map.setPaintProperty('connections-layer', 'line-dasharray', seq[step]);
+        step = (step + 1) % seq.length;
+        setTimeout(() => requestAnimationFrame(tick), 350);
+      }
+      requestAnimationFrame(tick);
+    } catch (e) { console.warn('Connections skipped:', e); }
 
-  // Animate the dasharray (gentle flowing effect)
-  let step = 0;
-  const seq = [[0,2,3],[1,2,3],[2,2,3],[3,2,3]];
-  function tick() {
-    if (!map.getLayer('connections-layer')) return;
-    map.setPaintProperty('connections-layer', 'line-dasharray', seq[step]);
-    step = (step + 1) % seq.length;
-    setTimeout(() => requestAnimationFrame(tick), 350);
-  }
-  requestAnimationFrame(tick);
-} catch (e) { console.warn('Connections skipped:', e); }
-
-    // ====== STUDENT PROFILES (photo avatars + click popups) ======
+    // ====== STUDENT PROFILES ======
     try {
       const resP = await fetch('./alumni_profiles.geojson');
       const profiles = await resP.json();
+
+      const seen = new Map();
+      const offsets = [[0,0],[14,0],[-14,0],[0,14],[0,-14],[12,12],[-12,12],[12,-12],[-12,-12]];
 
       profiles.features.forEach((f) => {
         if (!f.geometry || f.geometry.type !== 'Point') return;
         const p = f.properties || {};
         const img = p.image;
 
-        // Create circular avatar element
+        // De-overlap offsets for duplicate coordinates
+        const key = f.geometry.coordinates.join(',');
+        const i = seen.get(key) || 0;
+        seen.set(key, i + 1);
+        const [ox, oy] = offsets[i % offsets.length];
+
+        // Circular avatar element
         const el = document.createElement('div');
         el.className = 'avatar-marker';
         el.style.width = '30px';
@@ -337,7 +358,7 @@ try {
         el.addEventListener('mouseenter', () => el.style.transform = 'scale(1.12)');
         el.addEventListener('mouseleave', () => el.style.transform = 'scale(1)');
 
-        const marker = new mapboxgl.Marker({ element: el, anchor: 'center' })
+        const marker = new mapboxgl.Marker({ element: el, anchor: 'center', offset: [ox, oy] })
           .setLngLat(f.geometry.coordinates)
           .addTo(map);
 
@@ -354,24 +375,6 @@ try {
     } catch (e) {
       console.warn('Profiles markers skipped:', e);
     }
-const seen = new Map();
-const offsets = [[0,0],[14,0],[-14,0],[0,14],[0,-14],[12,12],[-12,12],[12,-12],[-12,-12]];
-
-profiles.features.forEach((f) => {
-  if (!f.geometry || f.geometry.type !== 'Point') return;
-  const key = f.geometry.coordinates.join(',');
-  const i = seen.get(key) || 0;
-  seen.set(key, i + 1);
-  const [ox, oy] = offsets[i % offsets.length];
-
-
-
-  const marker = new mapboxgl.Marker({ element: el, anchor: 'center', offset: [ox, oy] })
-    .setLngLat(f.geometry.coordinates)
-    .addTo(map);
-
-
-});
   });
 </script>
 </body>
