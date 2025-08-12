@@ -95,24 +95,44 @@
 
   map.on('load', async () => {
     // ====== ALUMNI CIRCLES ======
-    map.addSource('alumni-circles', {
-      type: 'geojson',
-      data: './alumni_grouped.geojson',
-      generateId: true
-    });
+const fixCoords = (gj) => {
+  const clean = v => (v && String(v).toLowerCase() !== 'unknown') ? String(v).toUpperCase() : '';
+  const near = (s, needle) => s && s.indexOf(needle) !== -1;
 
-    map.addLayer({
-      id: 'alumni-circles-layer',
-      type: 'circle',
-      source: 'alumni-circles',
-      paint: {
-        'circle-radius': sizeByCount,
-        'circle-color': colorByCount,
-        'circle-opacity': 0.80,
-        'circle-stroke-width': 0,
-        'circle-blur': 0.15
-      },
-      filter: ['==', ['geometry-type'], 'Point']
+  (gj.features || []).forEach(f => {
+    const p = f.properties || {};
+    const country = clean(p.COUNTRY || p.country || p.Country);
+    const state   = clean(p.STATE   || p.state   || p.State);
+
+    if (!f.geometry || f.geometry.type !== 'Point') return;
+
+    // Îles du Vent (French Polynesia) → center on Tahiti (Papeete)
+    if (near(state, 'ILES DU VENT') || near(country, 'FRENCH POLYNESIA')) {
+      f.geometry.coordinates = [-149.4068, -17.6509];
+    }
+
+    // New Caledonia → center on Nouméa
+    if (near(country, 'NEW CALEDONIA')) {
+      f.geometry.coordinates = [166.457, -22.271];
+    }
+
+    // Micronesia (FSM) → center on Pohnpei
+    if (near(country, 'MICRONESIA')) {
+      f.geometry.coordinates = [158.215, 6.885];
+    }
+  });
+  return gj;
+};
+
+const circlesResp = await fetch('./alumni_grouped.geojson');
+let circlesGJ = await circlesResp.json();
+circlesGJ = fixCoords(circlesGJ);
+
+map.addSource('alumni-circles', {
+  type: 'geojson',
+  data: circlesGJ,
+  generateId: true
+});
     });
 
     // Hover
