@@ -334,6 +334,24 @@ try {
     } catch (e) {
       console.warn('Profiles markers skipped:', e);
     }
+const seen = new Map();
+const offsets = [[0,0],[14,0],[-14,0],[0,14],[0,-14],[12,12],[-12,12],[12,-12],[-12,-12]];
+
+profiles.features.forEach((f) => {
+  if (!f.geometry || f.geometry.type !== 'Point') return;
+  const key = f.geometry.coordinates.join(',');
+  const i = seen.get(key) || 0;
+  seen.set(key, i + 1);
+  const [ox, oy] = offsets[i % offsets.length];
+
+
+
+  const marker = new mapboxgl.Marker({ element: el, anchor: 'center', offset: [ox, oy] })
+    .setLngLat(f.geometry.coordinates)
+    .addTo(map);
+
+
+});
   });
 </script>
 </body>
