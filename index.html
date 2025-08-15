@@ -61,17 +61,6 @@
     renderWorldCopies: false
   });
 
-  // Adds a background layer if the style lacks one (no style reload)
-  map.once('styledata', () => {
-    const hasBg = (map.getStyle().layers || []).some(l => l.type === 'background');
-    if (!hasBg) {
-      map.addLayer(
-        { id: 'bg-fallback', type: 'background', paint: { 'background-color': '#eef3f8' } },
-        (map.getStyle().layers && map.getStyle().layers[0] && map.getStyle().layers[0].id) || undefined
-      );
-    }
-  });
-
   map.on('error', e => console.error('Mapbox error →', e && e.error));
 
   // ====== Tooltip helpers ======
