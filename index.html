@@ -4,8 +4,8 @@
   <meta charset="utf-8" />
   <title>Science Alumni Map</title>
   <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no" />
-  <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
   <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet" />
+  <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
   <style>
     html, body, #map { height: 100%; margin: 0; }
     .legend {
@@ -28,6 +28,7 @@
       border-radius:6px; font-size:12px; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
       transform: translate(-50%, -120%); white-space: nowrap; display:none;
     }
+    .avatar-marker { will-change: transform; }
   </style>
 </head>
 <body>
@@ -49,25 +50,15 @@
 <script>
   // ====== MAPBOX CONFIG ======
   mapboxgl.accessToken = 'pk.eyJ1IjoibWFyaW9mZ3oiLCJhIjoiY21lMjlwajc4MHAxdDJxcHUwcWJhaTMzZSJ9.155BX_OMpbLYEk8AGx1unw';
-  const styleUrl = 'mapbox://styles/mariofgz/cmd6wlcaj03hv01srcgvpbtos';
 
-  // ====== MAP INIT ======
+  // ====== MAP INIT (pinned to light-v11) ======
   const map = new mapboxgl.Map({
     container: 'map',
-    style: styleUrl,
-    center: [120, 5],
-    zoom: 2,
+    style: 'mapbox://styles/mapbox/light-v11',
+    center: [150, -5],
+    zoom: 1.6,
     projection: 'mercator',
     renderWorldCopies: false
-  });
-
-  // Fallback if style has no background (prevents blank basemap)
-  map.once('styledata', () => {
-    const hasBg = (map.getStyle().layers || []).some(l => l.type === 'background');
-    if (!hasBg) {
-      console.warn('No background layer detected; switching to light-v11');
-      map.setStyle('mapbox://styles/mapbox/light-v11');
-    }
   });
 
   map.on('error', e => console.error('Mapbox error →', e && e.error));
@@ -82,10 +73,7 @@
     tip.style.display = 'block';
     tip._lngLat = lngLat;
   }
-  function hideTip(){
-    tip.style.display = 'none';
-    tip._lngLat = null;
-  }
+  function hideTip(){ tip.style.display = 'none'; tip._lngLat = null; }
   map.on('move', () => { if (tip._lngLat) showTip(tip._lngLat, tip.innerHTML); });
 
   // Shared expressions for circles
@@ -95,10 +83,10 @@
   ];
 
   map.on('load', async () => {
-    // ====== ALUMNI CIRCLES ======
+    // ====== 1) ALUMNI CIRCLES (load + tiny coordinate fixes) ======
     const fixCoords = (gj) => {
       const clean = v => (v && String(v).toLowerCase() !== 'unknown') ? String(v).toUpperCase() : '';
-      const near = (s, needle) => s && s.indexOf(needle) !== -1;
+      const near  = (s, needle) => s && s.indexOf(needle) !== -1;
 
       (gj.features || []).forEach(f => {
         const p = f.properties || {};
@@ -106,15 +94,15 @@
         const state   = clean(p.STATE   || p.state   || p.State);
         if (!f.geometry || f.geometry.type !== 'Point') return;
 
-        // Îles du Vent
+        // Îles du Vent (French Polynesia) → Papeete
         if (near(state, 'ILES DU VENT') || near(country, 'FRENCH POLYNESIA')) {
           f.geometry.coordinates = [-149.4068, -17.6509];
         }
-        // New Caledonia
+        // New Caledonia → Nouméa
         if (near(country, 'NEW CALEDONIA')) {
           f.geometry.coordinates = [166.457, -22.271];
         }
-        // Micronesia
+        // Micronesia (FSM) → Pohnpei
         if (near(country, 'MICRONESIA')) {
           f.geometry.coordinates = [158.215, 6.885];
         }
@@ -126,11 +114,27 @@
     let circlesGJ = await circlesResp.json();
     circlesGJ = fixCoords(circlesGJ);
 
-    map.addSource('alumni-circles', {
-      type: 'geojson',
-      data: circlesGJ,
-      generateId: true
-    });
+    map.addSource('alumni-circles', { type: 'geojson', data: circlesGJ, generateId: true });
+
+    // Auto-fit to all points, then nudge east/south so Pacific islands aren’t on the seam
+    try {
+      const feats = circlesGJ.features || [];
+      const pts = feats.filter(f => f.geometry && f.geometry.type === 'Point');
+      if (pts.length) {
+        let minLng =  180, minLat =  90, maxLng = -180, maxLat = -90;
+        pts.forEach(f => {
+          const [lng, lat] = f.geometry.coordinates;
+          if (lng < minLng) minLng = lng;
+          if (lng > maxLng) maxLng = lng;
+          if (lat < minLat) minLat = lat;
+          if (lat > maxLat) maxLat = lat;
+        });
+        const bounds = new mapboxgl.LngLatBounds([minLng, minLat], [maxLng, maxLat]);
+        map.fitBounds(bounds, { padding: 60, maxZoom: 1.8, duration: 0 });
+        const c = map.getCenter();
+        map.easeTo({ center: [c.lng + 20, c.lat - 5], duration: 0 });
+      }
+    } catch (e) { console.warn('fit/nudge skipped:', e); }
 
     // Base circle layer
     map.addLayer({
@@ -239,11 +243,11 @@
         .addTo(map);
     });
 
-    // ====== CONNECTION LINES ======
+    // ====== 2) CONNECTION LINES (NSW hub, dotted, animated) ======
     try {
       const pts = (circlesGJ.features || []).filter(f => f.geometry && f.geometry.type === 'Point');
 
-      // Find NSW, Australia as the hub
+      // Find NSW hub
       const isNSW = f => {
         const p = f.properties || {};
         const clean = v => (v && String(v).toLowerCase() !== 'unknown') ? String(v).toUpperCase() : '';
@@ -282,10 +286,7 @@
         properties: {}
       }));
 
-      map.addSource('connections', {
-        type: 'geojson',
-        data: { type: 'FeatureCollection', features: lines }
-      });
+      map.addSource('connections', { type:'geojson', data:{ type:'FeatureCollection', features: lines } });
 
       map.addLayer({
         id:'connections-layer',
@@ -300,7 +301,7 @@
         }
       });
 
-      // Animated dasharray (gentle flowing effect)
+      // Animate the dasharray
       let step = 0;
       const seq = [[0,2,3],[1,2,3],[2,2,3],[3,2,3]];
       function tick() {
@@ -312,7 +313,7 @@
       requestAnimationFrame(tick);
     } catch (e) { console.warn('Connections skipped:', e); }
 
-    // ====== STUDENT PROFILES ======
+    // ====== 3) STUDENT PROFILES (photo avatars + de-overlap + popup button) ======
     try {
       const resP = await fetch('./alumni_profiles.geojson');
       const profiles = await resP.json();
@@ -362,14 +363,32 @@
           .setLngLat(f.geometry.coordinates)
           .addTo(map);
 
+        // Robust link field + button styling
+        const rawLink =
+          p.career_link || p.careerLink || p.link || p.url || p.Link || p.URL || p['Link to career story'];
+        const safeLink = rawLink
+          ? (String(rawLink).startsWith('http') ? String(rawLink) : 'https://' + String(rawLink))
+          : null;
+
         const html = `
           <div class="popup-card">
             <div class="name">${p.name || ''}</div>
             <div class="role">${(p.job_title || '')}${p.employer ? ' — ' + p.employer : ''}</div>
             ${p.image ? `<img src="${p.image}" alt="${p.name || 'profile'}" />` : ''}
             <div class="overview">${p.overview || ''}</div>
-            ${p.career_link ? `<div><a href="${p.career_link}" target="_blank" rel="noopener">Read career story →</a></div>` : ''}
+            ${
+              safeLink
+                ? `<div style="margin-top:10px;">
+                     <a href="${safeLink}" target="_blank" rel="noopener noreferrer"
+                        style="display:inline-block;padding:8px 12px;background-color:#496dee;color:white;
+                               border-radius:4px;text-decoration:none;font-weight:600;font-size:13px;">
+                       🎓 Read career story →
+                     </a>
+                   </div>`
+                : ''
+            }
           </div>`;
+
         marker.setPopup(new mapboxgl.Popup({ offset: 14, maxWidth: '320px' }).setHTML(html));
       });
     } catch (e) {
@@ -377,5 +396,4 @@
     }
   });
 </script>
-</body>
-</html>
+
