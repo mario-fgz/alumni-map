@@ -51,7 +51,7 @@
   // ====== MAPBOX CONFIG ======
   mapboxgl.accessToken = 'pk.eyJ1IjoibWFyaW9mZ3oiLCJhIjoiY21lMjlwajc4MHAxdDJxcHUwcWJhaTMzZSJ9.155BX_OMpbLYEk8AGx1unw';
 
-  // ====== MAP INIT (pinned to light-v11) ======
+  // ====== MAP INIT ======
   const map = new mapboxgl.Map({
     container: 'map',
     style: 'mapbox://styles/mapbox/light-v11',
@@ -83,7 +83,7 @@
   ];
 
   map.on('load', async () => {
-    // ====== 1) ALUMNI CIRCLES (load + tiny coordinate fixes) ======
+    // ====== ALUMNI CIRCLES ======
     const fixCoords = (gj) => {
       const clean = v => (v && String(v).toLowerCase() !== 'unknown') ? String(v).toUpperCase() : '';
       const near  = (s, needle) => s && s.indexOf(needle) !== -1;
@@ -116,7 +116,7 @@
 
     map.addSource('alumni-circles', { type: 'geojson', data: circlesGJ, generateId: true });
 
-    // Auto-fit to all points, then nudge east/south so Pacific islands aren’t on the seam
+  
     try {
       const feats = circlesGJ.features || [];
       const pts = feats.filter(f => f.geometry && f.geometry.type === 'Point');
@@ -151,7 +151,7 @@
       filter: ['==', ['geometry-type'], 'Point']
     });
 
-    // Hover emphasis layer
+    // Hover
     map.addLayer({
       id: 'alumni-circles-hover',
       type: 'circle',
@@ -243,11 +243,11 @@
         .addTo(map);
     });
 
-    // ====== 2) CONNECTION LINES (NSW hub, dotted, animated) ======
+    // ====== CONNECTION LINES ======
     try {
       const pts = (circlesGJ.features || []).filter(f => f.geometry && f.geometry.type === 'Point');
 
-      // Find NSW hub
+      // Find NSW
       const isNSW = f => {
         const p = f.properties || {};
         const clean = v => (v && String(v).toLowerCase() !== 'unknown') ? String(v).toUpperCase() : '';
@@ -258,7 +258,7 @@
       const hub = pts.find(isNSW);
       const hubCoord = hub && hub.geometry && hub.geometry.coordinates ? hub.geometry.coordinates : [151.2093, -33.8688]; // Sydney fallback
 
-      // Build curved lines from NSW to random other points
+      // Curved lines from NSW to random other points
       const others = pts.filter(f => f !== hub);
       const pickN  = Math.min(18, others.length);
       const shuffled = others.sort(() => Math.random() - 0.5).slice(0, pickN);
@@ -301,7 +301,7 @@
         }
       });
 
-      // Animate the dasharray
+      // Animated dasharray
       let step = 0;
       const seq = [[0,2,3],[1,2,3],[2,2,3],[3,2,3]];
       function tick() {
@@ -313,7 +313,7 @@
       requestAnimationFrame(tick);
     } catch (e) { console.warn('Connections skipped:', e); }
 
-    // ====== 3) STUDENT PROFILES (photo avatars + de-overlap + popup button) ======
+    // ====== STUDENT PROFILES ======
     try {
       const resP = await fetch('./alumni_profiles.geojson');
       const profiles = await resP.json();
