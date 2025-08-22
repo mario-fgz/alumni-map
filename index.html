@@ -81,7 +81,7 @@
 
     // Colors by breakpoint
     const colorByCount = ['step', ['to-number', ['get', 'count']],
-      '#496dee', 11, '#d95e8b', 1000, '#e7975a', 2000, '#dad662'
+      '#ff635d', 11, '#007882', 1000, '#3f61c4', 2000, '#ffdc00'
     ];
 
     // ====== Helpers for merging/cleaning ======
@@ -89,64 +89,73 @@
     const NORM = s => U(s).normalize('NFKD').replace(/\p{Diacritic}/gu,'').toUpperCase();
     const isUnknown = v => !U(v) || NORM(v) === 'UNKNOWN';
 
-    const COUNTRY_ALIASES = new Map([
-      ['USA','UNITED STATES'], ['U.S.A.','UNITED STATES'], ['US','UNITED STATES'], ['UNITED STATES OF AMERICA','UNITED STATES'],
-      ['UK','UNITED KINGDOM'], ['GREAT BRITAIN','UNITED KINGDOM'],
-      ['ENGLAND','UNITED KINGDOM'], ['SCOTLAND','UNITED KINGDOM'], ['WALES','UNITED KINGDOM'], ['NORTHERN IRELAND','UNITED KINGDOM'],
-      ['VIENNA','AUSTRIA'],
-      ['HONG KONG SAR','HONG KONG'], ['MACAO SAR','MACAO'], ['MACAU','MACAO']
-    ]);
+const COUNTRY_ALIASES = new Map([
+  ['USA','UNITED STATES'], ['U.S.A.','UNITED STATES'], ['US','UNITED STATES'], ['UNITED STATES OF AMERICA','UNITED STATES'],
+  ['UK','UNITED KINGDOM'], ['GREAT BRITAIN','UNITED KINGDOM'],
+  ['ENGLAND','UNITED KINGDOM'], ['SCOTLAND','UNITED KINGDOM'], ['WALES','UNITED KINGDOM'], ['NORTHERN IRELAND','UNITED KINGDOM'],
+  ['VIENNA','AUSTRIA'],
+  ['HONG KONG SAR','HONG KONG'], ['HONG KONG S.A.R.','HONG KONG'],
+  ['MACAO SAR','MACAO'], ['MACAU','MACAO'],
+  ['TAIPEI','TAIWAN']  // sometimes shows up as “country”
+]);
 
-    const CENTRE = {
-      'UNITED STATES': [-98.5795, 39.8283],
-      'CHINA':         [104.1954, 35.8617],
-      'AUSTRALIA-NSW': [151.2093, -33.8688], // Sydney
-    };
+const CENTRE = {
+  'UNITED STATES': [-98.5795, 39.8283],
+  'CHINA':         [104.1954, 35.8617],
+  'AUSTRALIA-NSW': [151.2093, -33.8688],  // Sydney
+  'HONG KONG':     [114.1694, 22.3193],
+  'MACAO':         [113.5439, 22.1987],
+  'TAIWAN':        [120.9605, 23.6978],
+  'GEORGIA':       [44.7930, 41.7151]     // Tbilisi
+};
 
     function toTitle(upper){
       return U(upper).toLowerCase().replace(/\b\w/g, m => m.toUpperCase())
         .replace('Usa','USA').replace('Uk','UK').replace('Macao','Macao');
     }
 
-    // Decide bucket & coords per rules
-    function bucketKeyAndCoord(p, coord){
-      let country = NORM(p.COUNTRY || p.country || p.Country);
-      let state   = NORM(p.STATE   || p.state   || p.State);
-      let city    = NORM(p.CITY    || p.city    || p.City);
+ // Decide bucket & coords per rules
+function bucketKeyAndCoord(p, coord){
+  let country = NORM(p.COUNTRY || p.country || p.Country);
+  let state   = NORM(p.STATE   || p.state   || p.State);
+  let city    = NORM(p.CITY    || p.city    || p.City);
 
-      // If city/state says LONDON → UK
-      if (city === 'LONDON' || state === 'LONDON') country = 'UNITED KINGDOM';
+  // If city/state says LONDON → UK
+  if (city === 'LONDON' || state === 'LONDON') country = 'UNITED KINGDOM';
 
-      // Respect HK / MACAO / TAIWAN as separate from China
-      if (country === 'CHINA' && (state === 'HONG KONG' || state === 'MACAO' || state === 'MACAU' || state === 'TAIWAN')){
-        country = (state === 'MACAU') ? 'MACAO' : state;
-        state = '';
-      }
+  // Canonicalise country aliases early
+  if (COUNTRY_ALIASES.has(country)) country = COUNTRY_ALIASES.get(country);
 
-      // Canonicalise country aliases
-      if (COUNTRY_ALIASES.has(country)) country = COUNTRY_ALIASES.get(country);
+  // Respect HK / MACAO / TAIWAN as separate from China
+  if (country === 'CHINA' && (state === 'HONG KONG' || state === 'MACAO' || state === 'MACAU' || state === 'TAIWAN')){
+    country = (state === 'MACAU') ? 'MACAO' : state; // MACAU→MACAO
+    state = '';
+  }
 
-      // AUSTRALIA: Unknown/blank state → NSW
-      if (country === 'AUSTRALIA' && (isUnknown(state) || !state)) state = 'NSW';
+  // SPECIAL: explicit territories & small countries that can get mislocated → force centroid
+  if (country === 'HONG KONG' || country === 'MACAO' || country === 'TAIWAN' || country === 'GEORGIA'){
+    return { key: `COUNTRY|${country}`, label: toTitle(country), coord: CENTRE[country] };
+  }
 
-      // USA & CHINA: one dot per country
-      if (country === 'UNITED STATES'){
-        return { key: 'UNITED STATES', label: 'United States', coord: CENTRE['UNITED STATES'] };
-      }
-      if (country === 'CHINA'){
-        return { key: 'CHINA', label: 'China', coord: CENTRE['CHINA'] };
-      }
+  // AUSTRALIA: Unknown/blank state → NSW (keep by state)
+  if (country === 'AUSTRALIA' && (isUnknown(state) || !state)) state = 'NSW';
+  if (country === 'AUSTRALIA'){
+    const label = state ? `${state}, Australia` : 'Australia';
+    const c = (coord && coord.length===2) ? coord : CENTRE['AUSTRALIA-NSW'];
+    return { key: `AUSTRALIA|${state||'NSW'}`, label, coord: c };
+  }
 
-      // AUSTRALIA: keep by state
-      if (country === 'AUSTRALIA'){
-        const label = state ? `${state}, Australia` : 'Australia';
-        const c = (coord && coord.length===2) ? coord : CENTRE['AUSTRALIA-NSW'];
-        return { key: `AUSTRALIA|${state||'NSW'}`, label, coord: c };
-      }
+  // USA & CHINA: one dot per country (HK/Macao/Taiwan handled above)
+  if (country === 'UNITED STATES'){
+    return { key: 'UNITED STATES', label: 'United States', coord: CENTRE['UNITED STATES'] };
+  }
+  if (country === 'CHINA'){
+    return { key: 'CHINA', label: 'China', coord: CENTRE['CHINA'] };
+  }
 
-      // Everyone else: one dot per country
-      return { key: `COUNTRY|${country}`, label: toTitle(country), coord };
-    }
+  // Everyone else: ONE dot per country
+  return { key: `COUNTRY|${country}`, label: toTitle(country), coord };
+}
 
     // ====== Load & merge the circle data ======
     map.on('load', async () => {
