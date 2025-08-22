@@ -3,386 +3,388 @@
 <head>
   <meta charset="utf-8" />
   <title>Science Alumni Map</title>
-  <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"/>
   <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet" />
   <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
   <style>
-    html, body, #map { height: 100%; margin: 0; }
-    .legend {
-      position: absolute; bottom: 16px; left: 16px;
-      background: #fff; border-radius: 8px; padding: 8px 12px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-      z-index: 3;
-    }
-    .legend .row { display: flex; gap: 12px; align-items: center; }
-    .legend .key { display:inline-flex; align-items:center; gap:6px; }
-    .legend .dot { display:inline-block; border-radius: 50%; }
+    /* Fill the screen, including mobile dynamic viewport */
+    html, body, #map { height: 100dvh; margin: 0; }
+
     .popup-card { width: 260px; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
     .popup-card img { width: 100%; border-radius: 6px; margin: 6px 0; }
     .popup-card .name { font-weight: 700; font-size: 16px; }
     .popup-card .role { font-style: italic; color: #555; margin-bottom: 6px; }
+
+    /* Hover tooltip (disabled on touch via JS) */
     .tooltip{
       pointer-events:none; position:absolute; z-index: 4;
       background: rgba(0,0,0,0.85); color:#fff; padding:6px 8px;
       border-radius:6px; font-size:12px; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
       transform: translate(-50%, -120%); white-space: nowrap; display:none;
     }
-    .avatar-marker { will-change: transform; }
+
+    /* Mobile tweaks */
+    @media (max-width: 640px) {
+      .popup-card { width: 220px; }
+    }
   </style>
 </head>
 <body>
-<div id="map"></div>
+  <div id="map"></div>
+  <div class="tooltip" id="tooltip"></div>
 
-<div class="tooltip" id="tooltip"></div>
+  <script>
+    // ====== MAPBOX CONFIG ======
+    mapboxgl.accessToken = 'pk.eyJ1IjoibWFyaW9mZ3oiLCJhIjoiY21lMjlwajc4MHAxdDJxcHUwcWJhaTMzZSJ9.155BX_OMpbLYEk8AGx1unw';
 
-<script>
-  // ====== MAPBOX CONFIG ======
-  mapboxgl.accessToken = 'pk.eyJ1IjoibWFyaW9mZ3oiLCJhIjoiY21lMjlwajc4MHAxdDJxcHUwcWJhaTMzZSJ9.155BX_OMpbLYEk8AGx1unw';
-
-  // ====== MAP INIT ======
-  const map = new mapboxgl.Map({
-    container: 'map',
-    style: 'mapbox://styles/mapbox/light-v11',
-    center: [150, -5],
-    zoom: 1.6,
-    projection: 'mercator',
-    renderWorldCopies: false
-  });
-
-  map.on('error', e => console.error('Mapbox error →', e && e.error));
-
-  // ====== Tooltip helpers ======
-  const tip = document.getElementById('tooltip');
-  function showTip(lngLat, html){
-    const p = map.project(lngLat);
-    tip.style.left = p.x + 'px';
-    tip.style.top  = p.y + 'px';
-    tip.innerHTML  = html;
-    tip.style.display = 'block';
-    tip._lngLat = lngLat;
-  }
-  function hideTip(){ tip.style.display = 'none'; tip._lngLat = null; }
-  map.on('move', () => { if (tip._lngLat) showTip(tip._lngLat, tip.innerHTML); });
-
-  // Shared expressions for circles
-  const sizeByCount = ['step', ['to-number', ['get', 'count']], 5, 11, 12, 1000, 18, 2000, 25];
-  const colorByCount = ['step', ['to-number', ['get', 'count']],
-    '#ff635d', 11, '#007882', 1000, '#3f61c4', 2000, '#ffdc00'
-  ];
-
-  map.on('load', async () => {
-    // ====== ALUMNI CIRCLES ======
-    const fixCoords = (gj) => {
-      const clean = v => (v && String(v).toLowerCase() !== 'unknown') ? String(v).toUpperCase() : '';
-      const near  = (s, needle) => s && s.indexOf(needle) !== -1;
-
-      (gj.features || []).forEach(f => {
-        const p = f.properties || {};
-        const country = clean(p.COUNTRY || p.country || p.Country);
-        const state   = clean(p.STATE   || p.state   || p.State);
-        if (!f.geometry || f.geometry.type !== 'Point') return;
-
-        // Îles du Vent (French Polynesia) → Papeete
-        if (near(state, 'ILES DU VENT') || near(country, 'FRENCH POLYNESIA')) {
-          f.geometry.coordinates = [-149.4068, -17.6509];
-        }
-        // New Caledonia → Nouméa
-        if (near(country, 'NEW CALEDONIA')) {
-          f.geometry.coordinates = [166.457, -22.271];
-        }
-        // Micronesia (FSM) → Pohnpei
-        if (near(country, 'MICRONESIA')) {
-          f.geometry.coordinates = [158.215, 6.885];
-        }
-      });
-      return gj;
-    };
-
-    const circlesResp = await fetch('./alumni_grouped.geojson');
-    let circlesGJ = await circlesResp.json();
-    circlesGJ = fixCoords(circlesGJ);
-
-    map.addSource('alumni-circles', { type: 'geojson', data: circlesGJ, generateId: true });
-
-  
-    try {
-      const feats = circlesGJ.features || [];
-      const pts = feats.filter(f => f.geometry && f.geometry.type === 'Point');
-      if (pts.length) {
-        let minLng =  180, minLat =  90, maxLng = -180, maxLat = -90;
-        pts.forEach(f => {
-          const [lng, lat] = f.geometry.coordinates;
-          if (lng < minLng) minLng = lng;
-          if (lng > maxLng) maxLng = lng;
-          if (lat < minLat) minLat = lat;
-          if (lat > maxLat) maxLat = lat;
-        });
-        const bounds = new mapboxgl.LngLatBounds([minLng, minLat], [maxLng, maxLat]);
-        map.fitBounds(bounds, { padding: 60, maxZoom: 1.8, duration: 0 });
-        const c = map.getCenter();
-        map.easeTo({ center: [c.lng + 20, c.lat - 5], duration: 0 });
-      }
-    } catch (e) { console.warn('fit/nudge skipped:', e); }
-
-    // Base circle layer
-    map.addLayer({
-      id: 'alumni-circles-layer',
-      type: 'circle',
-      source: 'alumni-circles',
-      paint: {
-        'circle-radius': sizeByCount,
-        'circle-color': colorByCount,
-        'circle-opacity': 0.80,
-        'circle-stroke-width': 0,
-        'circle-blur': 0.15
-      },
-      filter: ['==', ['geometry-type'], 'Point']
+    // ====== MAP INIT (safe basemap) ======
+    const map = new mapboxgl.Map({
+      container: 'map',
+      style: 'mapbox://styles/mapbox/light-v11',
+      center: [150, -5],
+      zoom: 1.6,
+      projection: 'mercator',
+      renderWorldCopies: false
     });
 
-    // Hover
-    map.addLayer({
-      id: 'alumni-circles-hover',
-      type: 'circle',
-      source: 'alumni-circles',
-      paint: {
-        'circle-radius': [
-          'case',
-          ['boolean', ['feature-state', 'hover'], false],
-          ['+', sizeByCount, 4],
-          0
-        ],
-        'circle-color': colorByCount,
-        'circle-opacity': 0.90,
-        'circle-stroke-width': 0
-      }
-    });
+    // Basic nav control
+    map.addControl(new mapboxgl.NavigationControl({ visualizePitch: false }), 'bottom-right');
 
-    // Tooltip + hover state
-    let hoveredId = null;
-    map.on('mousemove', 'alumni-circles-layer', (e) => {
-      const f = e.features && e.features[0];
-      if (!f) return;
+    map.on('error', e => console.error('Mapbox error →', e && e.error));
 
-      if (hoveredId !== null) map.setFeatureState({ source: 'alumni-circles', id: hoveredId }, { hover: false });
-      hoveredId = f.id;
-      map.setFeatureState({ source: 'alumni-circles', id: hoveredId }, { hover: true });
-
-      const p = f.properties || {};
-      const clean = v => (v && String(v).toLowerCase() !== 'unknown') ? String(v) : '';
-      const country = clean(p.COUNTRY || p.country || p.Country);
-      const state   = clean(p.STATE   || p.state   || p.State);
-      const city    = clean(p.city    || p.City    || p.CITY);
-
-      let label = country || 'Unknown location';
-      if (state && country) label = `${state}, ${country}`;
-      if (city  && country) label = `${city}, ${country}`;
-      if (!country && (state || city)) label = state || city;
-
-      const count = p.count ?? p.Count ?? p.COUNT ?? 0;
-      const coords = f.geometry && f.geometry.coordinates ? f.geometry.coordinates : [e.lngLat.lng, e.lngLat.lat];
-      showTip(coords, `<b>${label}</b><br>Alumni: ${count}`);
-      map.getCanvas().style.cursor = 'pointer';
-    });
-    map.on('mouseleave', 'alumni-circles-layer', () => {
-      if (hoveredId !== null) {
-        map.setFeatureState({ source: 'alumni-circles', id: hoveredId }, { hover: false });
-        hoveredId = null;
-      }
-      hideTip();
-      map.getCanvas().style.cursor = '';
-    });
-
-    // Info icons on top of circles
-    map.addLayer({
-      id: 'alumni-circles-info',
-      type: 'symbol',
-      source: 'alumni-circles',
-      minzoom: 3,
-      layout: {
-        'icon-image': 'information-15',
-        'icon-size': 0.9,
-        'icon-allow-overlap': true
-      }
-    });
-
-    map.on('click', 'alumni-circles-info', (e) => {
-      const f = e.features && e.features[0];
-      if (!f) return;
-      const coords = f.geometry && f.geometry.coordinates ? f.geometry.coordinates : [e.lngLat.lng, e.lngLat.lat];
-      const p = f.properties || {};
-      const clean = v => (v && String(v).toLowerCase() !== 'unknown') ? String(v) : '';
-      const country = clean(p.COUNTRY || p.country || p.Country);
-      const state   = clean(p.STATE   || p.state   || p.State);
-      const city    = clean(p.city    || p.CITY    || p.City);
-
-      let label = country || 'Unknown location';
-      if (state && country) label = `${state}, ${country}`;
-      if (city  && country) label = `${city}, ${country}`;
-      if (!country && (state || city)) label = state || city;
-      const count = p.count ?? 0;
-
-      map.easeTo({ center: coords, zoom: Math.max(map.getZoom(), 4), duration: 800 });
-      new mapboxgl.Popup({ offset: 12 })
-        .setLngLat(coords)
-        .setHTML(`<div style="font-family:system-ui,sans-serif;font-size:12px">
-          <b>${label}</b><br/>Alumni: ${count}<br/><br/>
-          Tip: click nearby student pins to view bios.
-        </div>`)
-        .addTo(map);
-    });
-
-    // ====== CONNECTION LINES ======
-    try {
-      const pts = (circlesGJ.features || []).filter(f => f.geometry && f.geometry.type === 'Point');
-
-      // Find NSW
-      const isNSW = f => {
-        const p = f.properties || {};
-        const clean = v => (v && String(v).toLowerCase() !== 'unknown') ? String(v).toUpperCase() : '';
-        const country = clean(p.COUNTRY || p.country || p.Country);
-        const state   = clean(p.STATE   || p.state   || p.State);
-        return country === 'AUSTRALIA' && state === 'NSW';
-      };
-      const hub = pts.find(isNSW);
-      const hubCoord = hub && hub.geometry && hub.geometry.coordinates ? hub.geometry.coordinates : [151.2093, -33.8688]; // Sydney fallback
-
-      // Curved lines from NSW to random other points
-      const others = pts.filter(f => f !== hub);
-      const pickN  = Math.min(18, others.length);
-      const shuffled = others.sort(() => Math.random() - 0.5).slice(0, pickN);
-
-      function curvedLine(a, b) {
-        const [x1,y1] = a, [x2,y2] = b;
-        const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
-        const dx = x2 - x1, dy = y2 - y1;
-        const len = Math.hypot(dx, dy) || 1;
-        const nx = -dy / len, ny = dx / len;
-        const strength = 10;
-        const cx = mx + nx * strength, cy = my + ny * strength;
-        const steps = 30, coords = [];
-        for (let t=0; t<=1; t+=1/steps) {
-          const x = (1-t)*(1-t)*x1 + 2*(1-t)*t*cx + t*t*x2;
-          const y = (1-t)*(1-t)*y1 + 2*(1-t)*t*cy + t*t*y2;
-          coords.push([x,y]);
-        }
-        return coords;
-      }
-
-      const lines = shuffled.map(f => ({
-        type: 'Feature',
-        geometry: { type: 'LineString', coordinates: curvedLine(hubCoord, f.geometry.coordinates) },
-        properties: {}
-      }));
-
-      map.addSource('connections', { type:'geojson', data:{ type:'FeatureCollection', features: lines } });
-
-      map.addLayer({
-        id:'connections-layer',
-        type:'line',
-        source:'connections',
-        layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint:{
-          'line-color': '#00bcd4',
-          'line-opacity': ['interpolate', ['linear'], ['zoom'], 2, 0.25, 4, 0.45, 6, 0.6],
-          'line-width': 2.2,
-          'line-dasharray': [0, 2, 3]
-        }
-      });
-
-      // Animated dasharray
-      let step = 0;
-      const seq = [[0,2,3],[1,2,3],[2,2,3],[3,2,3]];
-      function tick() {
-        if (!map.getLayer('connections-layer')) return;
-        map.setPaintProperty('connections-layer', 'line-dasharray', seq[step]);
-        step = (step + 1) % seq.length;
-        setTimeout(() => requestAnimationFrame(tick), 350);
-      }
-      requestAnimationFrame(tick);
-    } catch (e) { console.warn('Connections skipped:', e); }
-
-    // ====== STUDENT PROFILES ======
-    try {
-      const resP = await fetch('./alumni_profiles.geojson');
-      const profiles = await resP.json();
-
-      const seen = new Map();
-      const offsets = [[0,0],[14,0],[-14,0],[0,14],[0,-14],[12,12],[-12,12],[12,-12],[-12,-12]];
-
-      profiles.features.forEach((f) => {
-        if (!f.geometry || f.geometry.type !== 'Point') return;
-        const p = f.properties || {};
-        const img = p.image;
-
-        // De-overlap offsets for duplicate coordinates
-        const key = f.geometry.coordinates.join(',');
-        const i = seen.get(key) || 0;
-        seen.set(key, i + 1);
-        const [ox, oy] = offsets[i % offsets.length];
-
-        // Circular avatar element
-        const el = document.createElement('div');
-        el.className = 'avatar-marker';
-        el.style.width = '30px';
-        el.style.height = '30px';
-        el.style.borderRadius = '50%';
-        el.style.background = '#ddd center/cover no-repeat';
-        el.style.boxShadow = '0 0 0 2px #fff, 0 2px 10px rgba(0,0,0,.25)';
-        el.style.transition = 'transform .15s ease';
-        el.style.cursor = 'pointer';
-
-        if (img) {
-          el.style.backgroundImage = `url('${img}')`;
-        } else {
-          const initials = (p.name || '').split(/\s+/).map(s => s[0]).join('').slice(0,2).toUpperCase();
-          el.style.display = 'grid';
-          el.style.placeItems = 'center';
-          el.style.background = '#888';
-          el.style.color = '#fff';
-          el.style.fontSize = '12px';
-          el.style.fontWeight = '700';
-          el.textContent = initials || '👤';
-        }
-
-        el.addEventListener('mouseenter', () => el.style.transform = 'scale(1.12)');
-        el.addEventListener('mouseleave', () => el.style.transform = 'scale(1)');
-
-        const marker = new mapboxgl.Marker({ element: el, anchor: 'center', offset: [ox, oy] })
-          .setLngLat(f.geometry.coordinates)
-          .addTo(map);
-
-        // Robust link field + button styling
-        const rawLink =
-          p.career_link || p.careerLink || p.link || p.url || p.Link || p.URL || p['Link to career story'];
-        const safeLink = rawLink
-          ? (String(rawLink).startsWith('http') ? String(rawLink) : 'https://' + String(rawLink))
-          : null;
-
-        const html = `
-          <div class="popup-card">
-            <div class="name">${p.name || ''}</div>
-            <div class="role">${(p.job_title || '')}${p.employer ? ' — ' + p.employer : ''}</div>
-            ${p.image ? `<img src="${p.image}" alt="${p.name || 'profile'}" />` : ''}
-            <div class="overview">${p.overview || ''}</div>
-            ${
-              safeLink
-                ? `<div style="margin-top:10px;">
-                     <a href="${safeLink}" target="_blank" rel="noopener noreferrer"
-                        style="display:inline-block;padding:8px 12px;background-color:#496dee;color:white;
-                               border-radius:4px;text-decoration:none;font-weight:600;font-size:13px;">
-                       🎓 Read career story →
-                     </a>
-                   </div>`
-                : ''
-            }
-          </div>`;
-
-        marker.setPopup(new mapboxgl.Popup({ offset: 14, maxWidth: '320px' }).setHTML(html));
-      });
-    } catch (e) {
-      console.warn('Profiles markers skipped:', e);
+    // ====== Touch / Mobile detection & gestures ======
+    const IS_TOUCH = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+    if (IS_TOUCH) {
+      map.scrollZoom.disable();     // avoid hijacking page scroll
+      map.dragRotate.disable();
+      map.touchZoomRotate.enable({ around: 'center' });
+      map.doubleClickZoom.disable();
     }
-  });
-</script>
 
+    // ====== Tooltip helpers (desktop) ======
+    const tip = document.getElementById('tooltip');
+    function showTip(lngLat, html){
+      const p = map.project(lngLat);
+      tip.style.left = p.x + 'px';
+      tip.style.top  = p.y + 'px';
+      tip.innerHTML  = html;
+      tip.style.display = 'block';
+      tip._lngLat = lngLat;
+    }
+    function hideTip(){ tip.style.display = 'none'; tip._lngLat = null; }
+    map.on('move', () => { if (tip._lngLat) showTip(tip._lngLat, tip.innerHTML); });
+
+    // ====== Circle styling (mobile-aware sizes) ======
+    const sizeByCount = IS_TOUCH
+      ? ['step', ['to-number', ['get', 'count']], 4, 11, 10, 1000, 16, 2000, 22]  // mobile
+      : ['step', ['to-number', ['get', 'count']], 5, 11, 12, 1000, 18, 2000, 25]; // desktop
+
+    // Colors by breakpoint (edit these hexes to change circle colours)
+    const colorByCount = ['step', ['to-number', ['get', 'count']],
+      '#496dee', 11, '#d95e8b', 1000, '#e7975a', 2000, '#dad662'
+    ];
+
+    map.on('load', async () => {
+      // ====== ALUMNI CIRCLES ======
+      const fixCoords = (gj) => {
+        const clean = v => (v && String(v).toLowerCase() !== 'unknown') ? String(v).toUpperCase() : '';
+        const near  = (s, needle) => s && s.indexOf(needle) !== -1;
+
+        (gj.features || []).forEach(f => {
+          const p = f.properties || {};
+          const country = clean(p.COUNTRY || p.country || p.Country);
+          const state   = clean(p.STATE   || p.state   || p.State);
+          if (!f.geometry || f.geometry.type !== 'Point') return;
+
+          // Îles du Vent (French Polynesia) → Papeete
+          if (near(state, 'ILES DU VENT') || near(country, 'FRENCH POLYNESIA')) {
+            f.geometry.coordinates = [-149.4068, -17.6509];
+          }
+          // New Caledonia → Nouméa
+          if (near(country, 'NEW CALEDONIA')) {
+            f.geometry.coordinates = [166.457, -22.271];
+          }
+          // Micronesia (FSM) → Pohnpei
+          if (near(country, 'MICRONESIA')) {
+            f.geometry.coordinates = [158.215, 6.885];
+          }
+        });
+        return gj;
+      };
+
+      const circlesResp = await fetch('./alumni_grouped.geojson');
+      let circlesGJ = await circlesResp.json();
+      circlesGJ = fixCoords(circlesGJ);
+
+      map.addSource('alumni-circles', { type: 'geojson', data: circlesGJ, generateId: true });
+
+      // Auto-fit to all points
+      try {
+        const feats = circlesGJ.features || [];
+        const pts = feats.filter(f => f.geometry && f.geometry.type === 'Point');
+        if (pts.length) {
+          let minLng =  180, minLat =  90, maxLng = -180, maxLat = -90;
+          pts.forEach(f => {
+            const [lng, lat] = f.geometry.coordinates;
+            if (lng < minLng) minLng = lng;
+            if (lng > maxLng) maxLng = lng;
+            if (lat < minLat) minLat = lat;
+            if (lat > maxLat) maxLat = lat;
+          });
+          const PAD = IS_TOUCH ? 20 : 60;
+          const bounds = new mapboxgl.LngLatBounds([minLng, minLat], [maxLng, maxLat]);
+          map.fitBounds(bounds, { padding: PAD, maxZoom: 1.8, duration: 0 });
+          const c = map.getCenter();
+          map.easeTo({ center: [c.lng + 20, c.lat - 5], duration: 0 });
+        }
+      } catch (e) { console.warn('fit/nudge skipped:', e); }
+
+      // Base circle layer
+      map.addLayer({
+        id: 'alumni-circles-layer',
+        type: 'circle',
+        source: 'alumni-circles',
+        paint: {
+          'circle-radius': sizeByCount,
+          'circle-color': colorByCount,
+          'circle-opacity': 0.80,
+          'circle-stroke-width': 0,
+          'circle-blur': 0.15
+        },
+        filter: ['==', ['geometry-type'], 'Point']
+      });
+
+      // Hover emphasis layer (desktop only)
+      map.addLayer({
+        id: 'alumni-circles-hover',
+        type: 'circle',
+        source: 'alumni-circles',
+        paint: {
+          'circle-radius': [
+            'case',
+            ['boolean', ['feature-state', 'hover'], false],
+            ['+', sizeByCount, 4],
+            0
+          ],
+          'circle-color': colorByCount,
+          'circle-opacity': 0.90,
+          'circle-stroke-width': 0
+        }
+      });
+
+      // Tooltip + hover state on desktop; tap popup on touch
+      let hoveredId = null;
+
+      if (!IS_TOUCH) {
+        map.on('mousemove', 'alumni-circles-layer', (e) => {
+          const f = e.features && e.features[0];
+          if (!f) return;
+
+          if (hoveredId !== null) map.setFeatureState({ source: 'alumni-circles', id: hoveredId }, { hover: false });
+          hoveredId = f.id;
+          map.setFeatureState({ source: 'alumni-circles', id: hoveredId }, { hover: true });
+
+          const p = f.properties || {};
+          const clean = v => (v && String(v).toLowerCase() !== 'unknown') ? String(v) : '';
+          const country = clean(p.COUNTRY || p.country || p.Country);
+          const state   = clean(p.STATE   || p.state   || p.State);
+          const city    = clean(p.city    || p.City    || p.CITY);
+
+          let label = country || 'Unknown location';
+          if (state && country) label = `${state}, ${country}`;
+          if (city  && country) label = `${city}, ${country}`;
+          if (!country && (state || city)) label = state || city;
+
+          const count = p.count ?? p.Count ?? p.COUNT ?? 0;
+          const coords = f.geometry?.coordinates || [e.lngLat.lng, e.lngLat.lat];
+          showTip(coords, `<b>${label}</b><br>Alumni: ${count}`);
+          map.getCanvas().style.cursor = 'pointer';
+        });
+
+        map.on('mouseleave', 'alumni-circles-layer', () => {
+          if (hoveredId !== null) {
+            map.setFeatureState({ source: 'alumni-circles', id: hoveredId }, { hover: false });
+            hoveredId = null;
+          }
+          hideTip();
+          map.getCanvas().style.cursor = '';
+        });
+      } else {
+        // Touch: tap to show a small popup instead of hover tooltip
+        map.on('click', 'alumni-circles-layer', (e) => {
+          const f = e.features && e.features[0]; if (!f) return;
+          const p = f.properties || {};
+          const clean = v => (v && String(v).toLowerCase() !== 'unknown') ? String(v) : '';
+          const country = clean(p.COUNTRY || p.country || p.Country);
+          const state   = clean(p.STATE   || p.state   || p.State);
+          const city    = clean(p.city    || p.City    || p.CITY);
+          let label = country || 'Unknown location';
+          if (state && country) label = `${state}, ${country}`;
+          if (city  && country) label = `${city}, ${country}`;
+          if (!country && (state || city)) label = state || city;
+          const count = p.count ?? p.Count ?? p.COUNT ?? 0;
+
+          new mapboxgl.Popup({ offset: 12, closeButton: true })
+            .setLngLat(e.lngLat)
+            .setHTML(`<div style="font-family:system-ui,sans-serif;font-size:13px">
+              <b>${label}</b><br/>Alumni: ${count}
+            </div>`)
+            .addTo(map);
+        });
+      }
+
+      // ====== CONNECTION LINES ======
+      try {
+        const pts = (circlesGJ.features || []).filter(f => f.geometry && f.geometry.type === 'Point');
+
+        // Find NSW hub
+        const isNSW = f => {
+          const p = f.properties || {};
+          const clean = v => (v && String(v).toLowerCase() !== 'unknown') ? String(v).toUpperCase() : '';
+          const country = clean(p.COUNTRY || p.country || p.Country);
+          const state   = clean(p.STATE   || p.state   || p.State);
+          return country === 'AUSTRALIA' && state === 'NSW';
+        };
+        const hub = pts.find(isNSW);
+        const hubCoord = hub?.geometry?.coordinates || [151.2093, -33.8688]; // Sydney fallback
+
+        // Curved lines from NSW to random other points
+        const others = pts.filter(f => f !== hub);
+        const pickN  = Math.min(18, others.length);
+        const shuffled = others.sort(() => Math.random() - 0.5).slice(0, pickN);
+
+        function curvedLine(a, b) {
+          const [x1,y1] = a, [x2,y2] = b;
+          const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+          const dx = x2 - x1, dy = y2 - y1;
+          const len = Math.hypot(dx, dy) || 1;
+          const nx = -dy / len, ny = dx / len;
+          const strength = 10;
+          const cx = mx + nx * strength, cy = my + ny * strength;
+          const steps = 30, coords = [];
+          for (let t=0; t<=1; t+=1/steps) {
+            const x = (1-t)*(1-t)*x1 + 2*(1-t)*t*cx + t*t*x2;
+            const y = (1-t)*(1-t)*y1 + 2*(1-t)*t*cy + t*t*y2;
+            coords.push([x,y]);
+          }
+          return coords;
+        }
+
+        const lines = shuffled.map(f => ({
+          type: 'Feature',
+          geometry: { type: 'LineString', coordinates: curvedLine(hubCoord, f.geometry.coordinates) },
+          properties: {}
+        }));
+
+        map.addSource('connections', { type:'geojson', data:{ type:'FeatureCollection', features: lines } });
+
+        map.addLayer({
+          id:'connections-layer',
+          type:'line',
+          source:'connections',
+          layout: { 'line-cap': 'round', 'line-join': 'round' },
+          paint:{
+            'line-color': '#00bcd4',
+            'line-opacity': ['interpolate', ['linear'], ['zoom'], 2, 0.25, 4, 0.45, 6, 0.6],
+            'line-width': 2.2,
+            'line-dasharray': [0, 2, 3]
+          }
+        });
+
+        // Animated dasharray
+        let step = 0;
+        const seq = [[0,2,3],[1,2,3],[2,2,3],[3,2,3]];
+        function tick() {
+          if (!map.getLayer('connections-layer')) return;
+          map.setPaintProperty('connections-layer', 'line-dasharray', seq[step]);
+          step = (step + 1) % seq.length;
+          setTimeout(() => requestAnimationFrame(tick), 350);
+        }
+        requestAnimationFrame(tick);
+      } catch (e) { console.warn('Connections skipped:', e); }
+
+      // ====== STUDENT PROFILES ======
+      try {
+        const resP = await fetch('./alumni_profiles.geojson');
+        const profiles = await resP.json();
+
+        const seen = new Map();
+        const offsets = [[0,0],[14,0],[-14,0],[0,14],[0,-14],[12,12],[-12,12],[12,-12],[-12,-12]];
+
+        profiles.features.forEach((f) => {
+          if (!f.geometry || f.geometry.type !== 'Point') return;
+          const p = f.properties || {};
+          const img = p.image;
+
+          // De-overlap offsets for duplicate coordinates
+          const key = f.geometry.coordinates.join(',');
+          const i = seen.get(key) || 0;
+          seen.set(key, i + 1);
+          const [ox, oy] = offsets[i % offsets.length];
+
+          // Circular avatar element
+          const el = document.createElement('div');
+          const AVATAR = IS_TOUCH ? 26 : 30;
+          el.className = 'avatar-marker';
+          el.style.width = AVATAR + 'px';
+          el.style.height = AVATAR + 'px';
+          el.style.borderRadius = '50%';
+          el.style.background = '#ddd center/cover no-repeat';
+          el.style.boxShadow = '0 0 0 2px #fff, 0 2px 10px rgba(0,0,0,.25)';
+          el.style.transition = 'transform .15s ease';
+          el.style.cursor = 'pointer';
+
+          if (img) {
+            el.style.backgroundImage = `url('${img}')`;
+          } else {
+            const initials = (p.name || '').split(/\s+/).map(s => s[0]).join('').slice(0,2).toUpperCase();
+            el.style.display = 'grid';
+            el.style.placeItems = 'center';
+            el.style.background = '#888';
+            el.style.color = '#fff';
+            el.style.fontSize = '12px';
+            el.style.fontWeight = '700';
+            el.textContent = initials || '👤';
+          }
+
+          el.addEventListener('mouseenter', () => el.style.transform = 'scale(1.12)');
+          el.addEventListener('mouseleave', () => el.style.transform = 'scale(1)');
+
+          const marker = new mapboxgl.Marker({ element: el, anchor: 'center', offset: [ox, oy] })
+            .setLngLat(f.geometry.coordinates)
+            .addTo(map);
+
+          // Robust link field + button styling
+          const rawLink =
+            p.career_link || p.careerLink || p.link || p.url || p.Link || p.URL || p['Link to career story'];
+          const safeLink = rawLink
+            ? (String(rawLink).startsWith('http') ? String(rawLink) : 'https://' + String(rawLink))
+            : null;
+
+          const html = `
+            <div class="popup-card">
+              <div class="name">${p.name || ''}</div>
+              <div class="role">${(p.job_title || '')}${p.employer ? ' — ' + p.employer : ''}</div>
+              ${p.image ? `<img src="${p.image}" alt="${p.name || 'profile'}" />` : ''}
+              <div class="overview">${p.overview || ''}</div>
+              ${
+                safeLink
+                  ? `<div style="margin-top:10px;">
+                       <a href="${safeLink}" target="_blank" rel="noopener noreferrer"
+                          style="display:inline-block;padding:8px 12px;background-color:#496dee;color:white;
+                                 border-radius:4px;text-decoration:none;font-weight:600;font-size:13px;">
+                         🎓 Read career story →
+                       </a>
+                     </div>`
+                  : ''
+              }
+            </div>`;
+          marker.setPopup(new mapboxgl.Popup({ offset: 14, maxWidth: '320px' }).setHTML(html));
+        });
+      } catch (e) {
+        console.warn('Profiles markers skipped:', e);
+      }
+    });
+  </script>
+</body>
+</html>
