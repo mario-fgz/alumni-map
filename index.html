@@ -112,11 +112,134 @@
         return gj;
       };
 
-      const circlesResp = await fetch('./alumni_grouped.geojson');
-      let circlesGJ = await circlesResp.json();
-      circlesGJ = fixCoords(circlesGJ);
+     const circlesResp = await fetch('./alumni_grouped.geojson');
+const rawGJ = await circlesResp.json();
 
-      map.addSource('alumni-circles', { type: 'geojson', data: circlesGJ, generateId: true });
+// --- helpers ---
+const U = s => (s ?? '').toString().trim();
+const NORM = s => U(s).normalize('NFKD').replace(/\p{Diacritic}/gu,'').toUpperCase();
+const isUnknown = v => !U(v) || NORM(v) === 'UNKNOWN';
+const approx = (a,b,eps=0.0001)=>Math.abs(a-b)<eps;
+
+// Canonical country names
+const COUNTRY_ALIASES = new Map([
+  ['USA','UNITED STATES'], ['U.S.A.','UNITED STATES'], ['US','UNITED STATES'], ['UNITED STATES OF AMERICA','UNITED STATES'],
+  ['UK','UNITED KINGDOM'], ['GREAT BRITAIN','UNITED KINGDOM'],
+  ['ENGLAND','UNITED KINGDOM'], ['SCOTLAND','UNITED KINGDOM'], ['WALES','UNITED KINGDOM'], ['NORTHERN IRELAND','UNITED KINGDOM'],
+  ['VIENNA','AUSTRIA'], // sometimes “country” accidentally set to Vienna
+  ['HONG KONG SAR','HONG KONG'], ['MACAO SAR','MACAO'], ['MACAU','MACAO']
+]);
+
+// Hard-coded centroids for special rules
+const CENTRE = {
+  'UNITED STATES': [-98.5795, 39.8283],
+  'CHINA':         [104.1954, 35.8617],
+  'AUSTRALIA-NSW': [151.2093, -33.8688], // Sydney
+};
+
+// Decide display bucket key + target coords per rules
+function bucketKeyAndCoord(p, coord){
+  let country = NORM(p.COUNTRY || p.country || p.Country);
+  let state   = NORM(p.STATE   || p.state   || p.State);
+  let city    = NORM(p.CITY    || p.city    || p.City);
+
+  // Fix obvious mislabels: if city/state says LONDON → UK
+  if (city === 'LONDON' || state === 'LONDON') country = 'UNITED KINGDOM';
+
+  // Respect HK / MACAO / TAIWAN as separate
+  if (country === 'CHINA' && (state === 'HONG KONG' || state === 'MACAO' || state === 'MACAU' || state === 'TAIWAN')){
+    country = (state === 'MACAU') ? 'MACAO' : state; // normalise MACAU→MACAO
+    state = ''; // treat as its own territory
+  }
+
+  // Canonicalise country aliases
+  if (COUNTRY_ALIASES.has(country)) country = COUNTRY_ALIASES.get(country);
+
+  // AUSTRALIA: Unknown/blank state → NSW
+  if (country === 'AUSTRALIA' && (isUnknown(state) || !state)) state = 'NSW';
+
+  // USA & CHINA: one dot per country (HK/Macao/Taiwan excluded above)
+  if (country === 'UNITED STATES'){
+    return { key: 'UNITED STATES', label: 'United States', coord: CENTRE['UNITED STATES'] };
+  }
+  if (country === 'CHINA'){
+    return { key: 'CHINA', label: 'China', coord: CENTRE['CHINA'] };
+  }
+
+  // AUSTRALIA: keep by state
+  if (country === 'AUSTRALIA'){
+    const label = state ? `${state}, Australia` : 'Australia';
+    // Use provided coord (it should already be state position); fallback to NSW centre
+    const c = (coord && coord.length===2) ? coord : CENTRE['AUSTRALIA-NSW'];
+    return { key: `AUSTRALIA|${state||'NSW'}`, label, coord: c };
+  }
+
+  // Everyone else: ONE dot per country, coordinate = mean later
+  return { key: `COUNTRY|${country}`, label: toTitle(country), coord };
+}
+
+function toTitle(upper){
+  // Simple title-caser for labels
+  return U(upper).toLowerCase().replace(/\b\w/g, m => m.toUpperCase())
+    .replace('Usa','USA').replace('Uk','UK').replace('Macao','Macao');
+}
+
+const buckets = new Map();
+for (const f of (rawGJ.features || [])){
+  if (!f.geometry || f.geometry.type !== 'Point') continue;
+  const coord = f.geometry.coordinates;
+  const p = f.properties || {};
+  const cnt = Number(p.count ?? p.COUNT ?? p.Count ?? 0) || 0;
+
+  const { key, label, coord: targetCoord } = bucketKeyAndCoord(p, coord);
+  if (!buckets.has(key)){
+    buckets.set(key, { label, coords: [], sum: 0, forcedCoord: targetCoord });
+  }
+  const b = buckets.get(key);
+  b.sum += cnt;
+  if (targetCoord) {
+    // For forced-centre countries (US/China/Australia states)
+    b.forcedCoord = targetCoord;
+  } else if (coord && coord.length===2) {
+    b.coords.push(coord);
+  }
+}
+
+// Build output features
+function meanCoord(arr){
+  if (!arr.length) return null;
+  const sx = arr.reduce((s,c)=>s+c[0],0), sy = arr.reduce((s,c)=>s+c[1],0);
+  return [sx/arr.length, sy/arr.length];
+}
+
+const merged = {
+  type: 'FeatureCollection',
+  features: []
+};
+
+for (const [key, b] of buckets){
+  const coord = b.forcedCoord || meanCoord(b.coords);
+  if (!coord) continue;
+
+  merged.features.push({
+    type: 'Feature',
+    geometry: { type: 'Point', coordinates: coord },
+    properties: {
+      label: b.label,           // clean label for tooltips
+      count: b.sum
+    }
+  });
+}
+
+// nudge a couple of island cases after merge
+for (const f of merged.features){
+  const lbl = (f.properties.label || '').toUpperCase();
+  if (lbl.includes('FRENCH POLYNESIA')) f.geometry.coordinates = [-149.4068, -17.6509];
+  if (lbl.includes('NEW CALEDONIA'))    f.geometry.coordinates = [166.457,  -22.271];
+  if (lbl.includes('MICRONESIA'))       f.geometry.coordinates = [158.215,    6.885];
+}
+
+map.addSource('alumni-circles', { type: 'geojson', data: merged, generateId: true });
 
       // Auto-fit to all points
       try {
